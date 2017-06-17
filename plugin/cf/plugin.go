@@ -35,7 +35,7 @@
 //
 //    {
 //        "skip_ssl_verification": false,
-//        "cf_bin": "/var/vcap/packages/cf_cli/bin/cf"
+//        "cf_bin": "/usr/local/bin/cf"
 //    }
 //
 // BACKUP DETAILS
@@ -59,6 +59,8 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
+	"os"
 
 	"github.com/starkandwayne/goutils/ansi"
 
@@ -66,7 +68,7 @@ import (
 )
 
 var (
-	DefaultCfBin             = "/var/vcap/packages/cf_cli/bin/cf"
+	DefaultCfBin             = "/usr/local/bin/cf"
 	DefaultSkipSSLValidation = false
 )
 
@@ -152,6 +154,11 @@ func getCFConfig(endpoint plugin.ShieldEndpoint) (config *CFConfig, err error) {
 		return nil, err
 	}
 
+	config.AppName, err = endpoint.StringValue("app_name")
+	if err != nil {
+		return nil, err
+	}
+
 	config.CfBin, err = endpoint.StringValueDefault("cf_bin", DefaultCfBin)
 	if err != nil {
 		return nil, err
@@ -190,17 +197,56 @@ func (p CFPlugin) Validate(endpoint plugin.ShieldEndpoint) error {
 }
 
 func (p CFPlugin) login(cfg *CFConfig) error {
-	// Login
-	cmd := fmt.Sprintf("%s login", cfg.CfBin)
-	cmd = fmt.Sprintf("%s -a '%s'", cmd, cfg.APIURL)
-	cmd = fmt.Sprintf("%s -u '%s'", cmd, cfg.Username)
-	cmd = fmt.Sprintf("%s -p '%s'", cmd, cfg.Password)
-	cmd = fmt.Sprintf("%s -o '%s'", cmd, cfg.Organization)
-	cmd = fmt.Sprintf("%s -s '%s'", cmd, cfg.Space)
-	if cfg.SkipSSLValidation {
-		cmd = fmt.Sprintf("%s --skip-ssl-validation", cmd)
+	script := `#!/bin/bash
+
+echo "Running $@"
+api_url=$1; shift
+skip_ssl_validation=$1; shift
+username=$1; shift
+password=$1; shift
+organization=$1; shift
+space=$1; shift
+appname=$1; shift
+cf_bin=$1; shift
+if [[ "${cf_bin:-X}" == "X" ]]; then
+  echo "Missing arguments"
+  exit 1
+fi
+
+skip_flag=
+if [[ "${skip_ssl_validation}" == "true" ]]; then
+  skip_flag=" --skip-ssl-validation"
+fi
+$cf_bin login -a $api_url -u $username -p $password -o $organization -s $space $skip_flag
+
+app_guid=$($cf_bin app --guid $appname)
+echo "App GUID: $app_guid"
+
+$cf_bin curl /v2/apps/${app_guid}
+`
+	// file, err := ioutil.TempFile("tmp", "cf-actions")
+	file, err := ioutil.TempFile(os.TempDir(), "cf-actions")
+	if err != nil {
+		return err
 	}
-	plugin.DEBUG("Login: executing `%s`", cmd)
+	defer os.Remove(file.Name())
+	if _, err := file.Write([]byte(script)); err != nil {
+		return err
+	}
+	if err := os.Chmod(file.Name(), 0755); err != nil {
+		return err
+	}
+
+	cmd := fmt.Sprintf("%s", file.Name())
+	cmd = fmt.Sprintf("%s '%s'", cmd, cfg.APIURL)
+	cmd = fmt.Sprintf("%s '%v'", cmd, cfg.SkipSSLValidation)
+	cmd = fmt.Sprintf("%s '%s'", cmd, cfg.Username)
+	cmd = fmt.Sprintf("%s '%s'", cmd, cfg.Password)
+	cmd = fmt.Sprintf("%s '%s'", cmd, cfg.Organization)
+	cmd = fmt.Sprintf("%s '%s'", cmd, cfg.Space)
+	cmd = fmt.Sprintf("%s '%s'", cmd, cfg.AppName)
+	cmd = fmt.Sprintf("%s '%s'", cmd, cfg.CfBin)
+	plugin.DEBUG("Login: executing `%s`", file.Name())
 	return plugin.Exec(cmd, plugin.STDOUT)
 }
 
