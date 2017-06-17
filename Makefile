@@ -48,6 +48,7 @@ plugins:
 	go $(BUILD_TYPE) ./plugin/consul
 	go $(BUILD_TYPE) ./plugin/mongo
 	go $(BUILD_TYPE) ./plugin/google
+	go $(BUILD_TYPE) ./plugin/cf
 
 clean:
 	rm shieldd shield-agent shield-schema shield

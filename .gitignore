@@ -19,8 +19,10 @@
 /xtrabackup
 /mongo
 /google
+/cf
 /mock
 .DS_Store
+/tmp
 
 # ignore release testing output
 /artifacts
