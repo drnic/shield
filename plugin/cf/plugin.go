@@ -196,20 +196,22 @@ func (p CFPlugin) Validate(endpoint plugin.ShieldEndpoint) error {
 	return nil
 }
 
-func (p CFPlugin) login(cfg *CFConfig) error {
+func (p CFPlugin) login(cfg *CFConfig, command string) error {
 	script := `#!/bin/bash
 
-echo "Running $@"
+set -e
+command=$1; shift
+echo "Running $command" >&2
 api_url=$1; shift
 skip_ssl_validation=$1; shift
 username=$1; shift
 password=$1; shift
 organization=$1; shift
 space=$1; shift
-appname=$1; shift
+app_name=$1; shift
 cf_bin=$1; shift
 if [[ "${cf_bin:-X}" == "X" ]]; then
-  echo "Missing arguments"
+  echo "Missing arguments" >&2
   exit 1
 fi
 
@@ -217,19 +219,27 @@ skip_flag=
 if [[ "${skip_ssl_validation}" == "true" ]]; then
   skip_flag=" --skip-ssl-validation"
 fi
-$cf_bin login -a $api_url -u $username -p $password -o $organization -s $space $skip_flag
+$cf_bin login -a $api_url -u $username -p $password -o $organization -s $space $skip_flag >&2
 
-app_guid=$($cf_bin app --guid $appname)
-echo "App GUID: $app_guid"
+app_guid=$($cf_bin app --guid $app_name)
+echo "App GUID: $app_guid"  >&2
 
-$cf_bin curl /v2/apps/${app_guid}
+set -x
+export CF_TRACE=true
+if [[ "${command:-download}" == "download" ]]; then
+  # http://apidocs.cloudfoundry.org/263/apps/downloads_the_staged_droplet_for_an_app.html
+  $cf_bin curl /v2/apps/${app_guid}/droplet/download
+else
+  # http://apidocs.cloudfoundry.org/263/apps/uploads_the_droplet_for_an_app.html
+  $cf_bin curl /v2/apps/${app_guid}/droplet/upload -d @/dev/fd/0
+fi
 `
 	// file, err := ioutil.TempFile("tmp", "cf-actions")
 	file, err := ioutil.TempFile(os.TempDir(), "cf-actions")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
+	// defer os.Remove(file.Name())
 	if _, err := file.Write([]byte(script)); err != nil {
 		return err
 	}
@@ -237,7 +247,7 @@ $cf_bin curl /v2/apps/${app_guid}
 		return err
 	}
 
-	cmd := fmt.Sprintf("%s", file.Name())
+	cmd := fmt.Sprintf("%s %s", file.Name(), command)
 	cmd = fmt.Sprintf("%s '%s'", cmd, cfg.APIURL)
 	cmd = fmt.Sprintf("%s '%v'", cmd, cfg.SkipSSLValidation)
 	cmd = fmt.Sprintf("%s '%s'", cmd, cfg.Username)
@@ -256,7 +266,7 @@ func (p CFPlugin) Backup(endpoint plugin.ShieldEndpoint) error {
 		return err
 	}
 
-	p.login(cfg)
+	p.login(cfg, "download")
 
 	return nil
 }
@@ -267,7 +277,7 @@ func (p CFPlugin) Restore(endpoint plugin.ShieldEndpoint) error {
 		return err
 	}
 
-	p.login(cfg)
+	p.login(cfg, "upload")
 
 	return nil
 }
