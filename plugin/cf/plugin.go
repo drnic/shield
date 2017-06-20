@@ -225,13 +225,18 @@ app_guid=$($cf_bin app --guid $app_name)
 echo "App GUID: $app_guid"  >&2
 
 set -x
-export CF_TRACE=true
 if [[ "${command:-download}" == "download" ]]; then
+	export CF_TRACE=true
   # http://apidocs.cloudfoundry.org/263/apps/downloads_the_staged_droplet_for_an_app.html
   $cf_bin curl /v2/apps/${app_guid}/droplet/download
 else
   # http://apidocs.cloudfoundry.org/263/apps/uploads_the_droplet_for_an_app.html
-  $cf_bin curl /v2/apps/${app_guid}/droplet/upload -d @/dev/fd/0
+	oauth_token=$($cf_bin oauth-token)
+	api=$($cf_bin api | grep endpoint | awk '{print $3}')
+	curl -H "Authorization: ${oauth_token}" "${api}/v2/apps/${app_guid}/droplet/upload" \
+		-X PUT -F "droplet=@-" -v
+
+	# in future, might want to get "jq -r .metadata.url" and poll until .entity.status == "finished"
 fi
 `
 	// file, err := ioutil.TempFile("tmp", "cf-actions")
