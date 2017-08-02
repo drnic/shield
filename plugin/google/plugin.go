@@ -57,6 +57,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -107,7 +108,7 @@ func main() {
 type GooglePlugin plugin.PluginInfo
 
 type GoogleConnectionInfo struct {
-	JsonKey string
+	JSONKey []byte
 	Bucket  string
 	Prefix  string
 }
@@ -118,20 +119,24 @@ func (p GooglePlugin) Meta() plugin.PluginInfo {
 
 func (p GooglePlugin) Validate(endpoint plugin.ShieldEndpoint) error {
 	var (
-		s    string
+		s string
+		// json_key map[string]interface{}
 		err  error
 		fail bool
 	)
 
-	s, err = endpoint.StringValueDefault("json_key", DefaultJsonKey)
-	if err != nil {
-		ansi.Printf("@R{\u2717 json_key     %s}\n", err)
-		fail = true
-	} else if s == "" {
-		ansi.Printf("@G{\u2713 json_key}     (using Google Application Default Credentials)\n")
-	} else {
-		ansi.Printf("@G{\u2713 json_key}     @C{%s}\n", s)
-	}
+	// json_key, err = endpoint.MapValue("json_key")
+	// if err != nil {
+	//
+	// s, err = endpoint.StringValueDefault("json_key", DefaultJsonKey)
+	// if err != nil {
+	// 	ansi.Printf("@R{\u2717 json_key     %s}\n", err)
+	// 	fail = true
+	// } else if s == "" {
+	// 	ansi.Printf("@G{\u2713 json_key}     (using Google Application Default Credentials)\n")
+	// } else {
+	// 	ansi.Printf("@G{\u2713 json_key}     @C{%s}\n", s)
+	// }
 
 	s, err = endpoint.StringValue("bucket")
 	if err != nil {
@@ -229,28 +234,33 @@ func (p GooglePlugin) Purge(endpoint plugin.ShieldEndpoint, file string) error {
 	return nil
 }
 
-func getGoogleConnInfo(e plugin.ShieldEndpoint) (GoogleConnectionInfo, error) {
-	jsonKey, err := e.StringValueDefault("json_key", DefaultJsonKey)
+func getGoogleConnInfo(e plugin.ShieldEndpoint) (conninfo GoogleConnectionInfo, err error) {
+	jsonKey, err := e.MapValue("json_key")
+	if err != nil {
+		jsonKeyStr, err := e.StringValueDefault("json_key", DefaultJsonKey)
+		if err != nil {
+			return GoogleConnectionInfo{}, err
+		}
+		conninfo.JSONKey = []byte(jsonKeyStr)
+	} else {
+		conninfo.JSONKey, err = json.Marshal(jsonKey)
+		if err != nil {
+			return GoogleConnectionInfo{}, err
+		}
+	}
+
+	conninfo.Bucket, err = e.StringValue("bucket")
 	if err != nil {
 		return GoogleConnectionInfo{}, err
 	}
 
-	bucket, err := e.StringValue("bucket")
+	conninfo.Prefix, err = e.StringValueDefault("prefix", DefaultPrefix)
 	if err != nil {
 		return GoogleConnectionInfo{}, err
 	}
+	conninfo.Prefix = strings.TrimLeft(conninfo.Prefix, "/")
 
-	prefix, err := e.StringValueDefault("prefix", DefaultPrefix)
-	if err != nil {
-		return GoogleConnectionInfo{}, err
-	}
-	prefix = strings.TrimLeft(prefix, "/")
-
-	return GoogleConnectionInfo{
-		JsonKey: jsonKey,
-		Bucket:  bucket,
-		Prefix:  prefix,
-	}, nil
+	return
 }
 
 func (gcs GoogleConnectionInfo) genBackupPath() string {
@@ -264,16 +274,16 @@ func (gcs GoogleConnectionInfo) genBackupPath() string {
 }
 
 func (gcs GoogleConnectionInfo) Connect() (*storage.Service, error) {
-	var err error
 	var storageClient *http.Client
 
-	if gcs.JsonKey != "" {
-		storageJwtConf, err := oauthgoogle.JWTConfigFromJSON([]byte(gcs.JsonKey), storage.DevstorageFullControlScope)
+	if len(gcs.JSONKey) > 0 {
+		storageJwtConf, err := oauthgoogle.JWTConfigFromJSON(gcs.JSONKey, storage.DevstorageFullControlScope)
 		if err != nil {
 			return nil, err
 		}
 		storageClient = storageJwtConf.Client(oauth2.NoContext)
 	} else {
+		var err error
 		storageClient, err = oauthgoogle.DefaultClient(oauth2.NoContext, storage.DevstorageFullControlScope)
 		if err != nil {
 			return nil, err
