@@ -82,7 +82,7 @@ func main() {
 	p := GooglePlugin{
 		Name:    "Google Cloud Storage Plugin",
 		Author:  "Stark & Wayne",
-		Version: "0.0.1",
+		Version: "0.0.2",
 		Features: plugin.PluginFeatures{
 			Target: "no",
 			Store:  "yes",
